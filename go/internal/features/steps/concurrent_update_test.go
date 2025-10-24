@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -14,8 +13,6 @@ import (
 )
 import "context"
 import "github.com/cucumber/godog"
-
-var tf *todoFeature
 
 func TestConcurrent_update(t *testing.T) {
 	suite := godog.TestSuite{
@@ -35,11 +32,11 @@ func TestConcurrent_update(t *testing.T) {
 func InitializeconcurrentUpdatescenario(ctx *godog.ScenarioContext) {
 	ctx.Before(func(ctx context.Context, sc *godog.Scenario) (context.Context, error) {
 		tf = &todoFeature{}
-		ctx, _ = setupServer(ctx, tf)
+		ctx, _ = tf.setupServer(ctx)
 		return ctx, nil
 	})
 	ctx.After(func(ctx context.Context, sc *godog.Scenario, err error) (context.Context, error) {
-		ctx, err = closeSever(ctx, tf)
+		ctx, err = tf.closeSever(ctx)
 		return ctx, err
 	})
 	ctx.Step(`^the secret key "([^"]*)" is set up$`, isJwtSecretSet)
@@ -235,23 +232,5 @@ func theFinalTitleOfTheTaskWillBeARandomMixOfTheTwoVersions(ctx context.Context)
 	fmt.Printf("Only %d out of 400 changes were actually saved to the database.\n", totalAppends)
 	fmt.Printf("-------------------------------\n")
 
-	return ctx, nil
-}
-
-func setupServer(ctx context.Context, tf *todoFeature) (context.Context, error) {
-	router := app.SetupRouter()
-
-	tf.server = httptest.NewServer(router)
-	tf.baseURL = tf.server.URL
-	tf.client = tf.server.Client()
-	tf.errs = nil
-	tf.success = 0
-	return ctx, nil
-}
-
-func closeSever(ctx context.Context, tf *todoFeature) (context.Context, error) {
-	if tf.server != nil {
-		tf.server.Close()
-	}
 	return ctx, nil
 }

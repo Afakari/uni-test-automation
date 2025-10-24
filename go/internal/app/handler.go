@@ -44,6 +44,13 @@ func LoginHandler(c *gin.Context) {
 		return
 	}
 
+	// --- REQUIRED: Check for null/empty fields ---
+	if creds.Username == "" || creds.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Username and password required"})
+		return
+	}
+	// ---------------------------------------------
+
 	hashed, ok := Users.Load(creds.Username)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
