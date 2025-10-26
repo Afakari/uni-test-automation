@@ -12,6 +12,20 @@ import (
 	"todoapp/internal/app"
 )
 
+type contextKey string
+
+const todoFeatureKey contextKey = "todoFeature"
+
+func getFeature(ctx context.Context) (*todoFeature, error) {
+	if tf, ok := ctx.Value(todoFeatureKey).(*todoFeature); ok {
+		return tf, nil
+	}
+	return nil, fmt.Errorf("test context not found")
+}
+
+func setFeature(ctx context.Context, tf *todoFeature) context.Context {
+	return context.WithValue(ctx, todoFeatureKey, tf)
+}
 func TestUserAuthorization(t *testing.T) {
 	suite := godog.TestSuite{
 		ScenarioInitializer: InitializeUserAuthenticationScenario,
@@ -29,13 +43,18 @@ func TestUserAuthorization(t *testing.T) {
 
 func InitializeUserAuthenticationScenario(ctx *godog.ScenarioContext) {
 	ctx.Before(func(ctx context.Context, sc *godog.Scenario) (context.Context, error) {
-		tf = &todoFeature{}
-		ctx, _ = tf.setupServer(ctx)
-		return ctx, nil
+		newTf := &todoFeature{}
+		newCtx, _ := newTf.setupServer(ctx)
+		newCtx = setFeature(newCtx, newTf)
+		return newCtx, nil
 	})
+
 	ctx.After(func(ctx context.Context, sc *godog.Scenario, err error) (context.Context, error) {
-		ctx, err = tf.closeSever(ctx)
-		return ctx, err
+		tf, err := getFeature(ctx)
+		if err != nil {
+			return ctx, err
+		}
+		return tf.closeSever(ctx)
 	})
 
 	ctx.Step(`^the secret key "([^"]*)" is set up$`, isJwtSecretSet)
@@ -59,6 +78,11 @@ func InitializeUserAuthenticationScenario(ctx *godog.ScenarioContext) {
 }
 
 func userLogsInAndStoresToken(ctx context.Context, username, password string) (context.Context, error) {
+	tf, err := getFeature(ctx)
+	if err != nil {
+		return ctx, err
+	}
+
 	tf.currentUser = ""
 
 	body := app.Credentials{Username: username, Password: password}
@@ -85,8 +109,12 @@ func userLogsInAndStoresToken(ctx context.Context, username, password string) (c
 	tf.userTokens[username] = token
 	return ctx, nil
 }
-
 func userGetsAllTodos(ctx context.Context, username string) (context.Context, error) {
+	tf, err := getFeature(ctx)
+	if err != nil {
+		return ctx, err
+	}
+
 	tf.currentUser = username
 
 	resp, err := tf.makeRequest("GET", "/todos", nil)
@@ -96,8 +124,12 @@ func userGetsAllTodos(ctx context.Context, username string) (context.Context, er
 	tf.lastResponse = resp
 	return ctx, nil
 }
+func todoTitleExists(ctx context.Context, title string) (bool, error) {
+	tf, err := getFeature(ctx)
+	if err != nil {
+		return false, err
+	}
 
-func todoTitleExists(title string) (bool, error) {
 	if tf.lastResponse == nil {
 		return false, fmt.Errorf("no response to check")
 	}
@@ -112,7 +144,7 @@ func todoTitleExists(title string) (bool, error) {
 	var todos []app.Todo
 	if err := json.Unmarshal(bodyBytes, &todos); err != nil {
 		if tf.lastResponse.StatusCode != http.StatusOK {
-			return false, nil // Assume if status isn't 200, the title isn't 'seen' successfully
+			return false, nil
 		}
 		return false, fmt.Errorf("failed to decode response body as []app.Todo: %w", err)
 	}
@@ -124,9 +156,9 @@ func todoTitleExists(title string) (bool, error) {
 	}
 	return false, nil
 }
-
 func userShouldOnlySee(ctx context.Context, username, title string) (context.Context, error) {
-	found, err := todoTitleExists(title)
+	// Pass ctx to the helper function
+	found, err := todoTitleExists(ctx, title)
 	if err != nil {
 		return ctx, err
 	}
@@ -135,8 +167,12 @@ func userShouldOnlySee(ctx context.Context, username, title string) (context.Con
 	}
 	return ctx, nil
 }
-
 func userTriesToGetAnotherUsersTodoByID(ctx context.Context, requestingUser, ownerUser string) (context.Context, error) {
+	tf, err := getFeature(ctx)
+	if err != nil {
+		return ctx, err
+	}
+
 	tf.currentUser = requestingUser // Set the active user for the request
 
 	// Get the target todo ID. Assuming the owner user has created a todo (setup in the background).
@@ -154,6 +190,11 @@ func userTriesToGetAnotherUsersTodoByID(ctx context.Context, requestingUser, own
 }
 
 func userTriesToUpdateAnotherUsersTodo(ctx context.Context, requestingUser, ownerUser string) (context.Context, error) {
+	tf, err := getFeature(ctx)
+	if err != nil {
+		return ctx, err
+	}
+
 	tf.currentUser = requestingUser
 
 	// Get the target todo ID
@@ -174,6 +215,11 @@ func userTriesToUpdateAnotherUsersTodo(ctx context.Context, requestingUser, owne
 }
 
 func userTriesToDeleteAnotherUsersTodo(ctx context.Context, requestingUser, ownerUser string) (context.Context, error) {
+	tf, err := getFeature(ctx)
+	if err != nil {
+		return ctx, err
+	}
+
 	tf.currentUser = requestingUser
 
 	todoID, ok := tf.userTodoIDs[ownerUser]
@@ -190,6 +236,11 @@ func userTriesToDeleteAnotherUsersTodo(ctx context.Context, requestingUser, owne
 }
 
 func iTryToAccessTodosWithAnInvalidToken(ctx context.Context) (context.Context, error) {
+	tf, err := getFeature(ctx)
+	if err != nil {
+		return ctx, err
+	}
+
 	tf.token = "invalid.token.string"
 	tf.currentUser = ""
 
@@ -205,21 +256,12 @@ func iTryToAccessTodosWithAnInvalidToken(ctx context.Context) (context.Context, 
 }
 
 func iTryToAccessTodosWithAnExpiredToken(ctx context.Context) (context.Context, error) {
-	// A standard JWT contains: Header, Payload (incl. 'exp'), and Signature.
-	// Since we cannot dynamically sign an expired token without the actual signing library,
-	// we will use a common mock expired token structure.
-	// NOTE: In a real test, this token would need to be generated by the app's JWT logic
-	// with a very short expiry time, then waited on, or mocked entirely.
-	// For simplicity, we use a token that is syntactically valid but uses a known-to-be-expired
-	// payload if the library treats it as such.
-	// The key is to pass a token that your middleware *validates* but *rejects* on expiration.
+	tf, err := getFeature(ctx)
+	if err != nil {
+		return ctx, err
+	}
 
-	// A simple mock token with a very old expiration timestamp (e.g., 2000-01-01) might work
-	// if the token is properly signed by the test secret. Since we can't sign it here,
-	// we'll rely on the existing invalid token test logic unless we had access to the JWT signing method.
-	// For robust testing, we will use a token that is syntactically valid (Base64 parts)
-	// but is guaranteed to fail signing verification by using a fake signature,
-	// which often triggers the same 401 response as expiration.
+	// ... (rest of the logic is the same) ...
 	tf.token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6ImV4cGlyZWQiLCJleHAiOjkyNzQzNjgwMH0.FAKE_SIGNATURE"
 	tf.currentUser = ""
 
@@ -236,6 +278,11 @@ func iTryToAccessTodosWithAnExpiredToken(ctx context.Context) (context.Context, 
 }
 
 func iTryToAccessTodosWithoutAnAuthorizationHeader(ctx context.Context) (context.Context, error) {
+	tf, err := getFeature(ctx)
+	if err != nil {
+		return ctx, err
+	}
+
 	tf.token = ""
 	tf.currentUser = ""
 
@@ -248,6 +295,11 @@ func iTryToAccessTodosWithoutAnAuthorizationHeader(ctx context.Context) (context
 }
 
 func iTryToAccessTodosWithMalformedAuthorizationHeader(ctx context.Context) (context.Context, error) {
+	tf, err := getFeature(ctx)
+	if err != nil {
+		return ctx, err
+	}
+
 	tf.token = "malformed.token.no-signature"
 	tf.currentUser = ""
 
