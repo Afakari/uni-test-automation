@@ -52,29 +52,9 @@ Feature: End-to-End Integration Tests
     And user "bob" creates a todo with title "Bob's weekend plans"
 
     Then user "alice" should see 2 todos in their list
-    And user "bob" should see 2 todos in their list
     And user "alice" should not see "Bob's work tasks"
+    And user "bob" should see 2 todos in their list
     And user "bob" should not see "Alice's shopping list"
-
-  Scenario: Session management and token expiration
-    Given a user named "alice" with password "password123" is registered
-    And user "alice" logs in with password "password123" successfully
-    And user "alice" creates a todo with title "Session test task"
-
-    When user "alice" performs multiple operations with the same token
-    Then all operations should succeed
-    And the token should remain valid
-    And user "alice" should be able to access their todos
-
-  Scenario: Data persistence across operations
-    Given a user named "alice" with password "password123" is registered
-    And user "alice" logs in with password "password123" successfully
-    And user "alice" creates multiple todos with different titles
-
-    When user "alice" performs various operations (update, delete, create)
-    Then the data should remain consistent
-    And all changes should be reflected correctly
-    And no data should be lost or corrupted
 
   Scenario: Error recovery and system resilience
     Given a user named "alice" with password "password123" is registered

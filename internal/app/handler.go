@@ -83,6 +83,10 @@ func CreateTodoHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 		return
 	}
+	if req.Title == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title required"})
+		return
+	}
 
 	newTodo := &Todo{
 		ID:        GenerateID(),

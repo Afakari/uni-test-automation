@@ -30,7 +30,6 @@ Feature: User Authorization and Data Isolation
     When user "bob" tries to update user "alice"'s todo
     Then user "bob" should receive an error message "Todo not found"
     And the response status should be 404
-#TODO create the then of the error message
   Scenario: Users cannot delete each other's todos
     Given user "alice" has created a todo with title "Alice's Task"
     And user "bob" has created a todo with title "Bob's Task"

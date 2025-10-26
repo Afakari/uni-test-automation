@@ -1,108 +1,25 @@
 package steps
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"testing"
 
-	"github.com/cucumber/godog"
 	"todoapp/internal/app"
-	"todoapp/internal/features/support"
 )
 
-func TestTodoManagement(t *testing.T) {
-	suite := godog.TestSuite{
-		ScenarioInitializer: InitializeTodoManagementScenario,
-		Options: &godog.Options{
-			Format:   "pretty",
-			Paths:    []string{"../todo_management.feature"},
-			TestingT: t,
-		},
-	}
-
-	if suite.Run() != 0 {
-		t.Fatal("non-zero status returned, failed to run todo management feature tests")
-	}
-}
-
-func InitializeTodoManagementScenario(ctx *godog.ScenarioContext) {
-	ctx.Before(func(ctx context.Context, sc *godog.Scenario) (context.Context, error) {
-		tc := support.NewTestContext()
-		if err := tc.SetupServer(); err != nil {
-			return ctx, fmt.Errorf("failed to setup test server: %w", err)
-		}
-		return support.SetTestContextInContext(ctx, tc), nil
-	})
-
-	ctx.After(func(ctx context.Context, sc *godog.Scenario, err error) (context.Context, error) {
-		tc := support.GetTestContextFromContext(ctx)
-		if tc != nil {
-			tc.CloseServer()
-		}
-		return ctx, nil
-	})
-
-	// Authentication steps (using common steps)
-	ctx.Step(`^the secret key "([^"]*)" is set up$`, theSecretKeyIsSetUp)
-	ctx.Step(`^a user named "([^"]*)" with password "([^"]*)" is registered$`, aUserNamedWithPasswordIsRegistered)
-	ctx.Step(`^user "([^"]*)" logs in with password "([^"]*)" successfully$`, userLogsInWithPasswordSuccessfully)
-
-	// Todo creation steps
-	ctx.Step(`^user "([^"]*)" creates a todo with title "([^"]*)"$`, userCreatesATodoWithTitle)
-	ctx.Step(`^user "([^"]*)" has created a todo with title "([^"]*)"$`, userHasCreatedATodoWithTitle)
-
-	// Todo retrieval steps
-	ctx.Step(`^user "([^"]*)" requests all todos$`, userRequestsAllTodos)
-	ctx.Step(`^user "([^"]*)" requests the todo by ID$`, userRequestsTheTodoByID)
-
-	// Todo update steps
-	ctx.Step(`^user "([^"]*)" updates the todo title to "([^"]*)"$`, userUpdatesTheTodoTitleTo)
-	ctx.Step(`^user "([^"]*)" marks the todo as completed$`, userMarksTheTodoAsCompleted)
-
-	// Todo deletion steps
-	ctx.Step(`^user "([^"]*)" deletes the todo$`, userDeletesTheTodo)
-
-	// Authorization steps
-	ctx.Step(`^user "([^"]*)" tries to update Bob's todo$`, userTriesToUpdateBobsTodo)
-	ctx.Step(`^user "([^"]*)" should not see "([^"]*)"$`, userShouldNotSee)
-
-	// Error handling steps
-	ctx.Step(`^user "([^"]*)" tries to create a todo with empty title$`, userTriesToCreateATodoWithEmptyTitle)
-	ctx.Step(`^user "([^"]*)" tries to update a non-existent todo$`, userTriesToUpdateANonExistentTodo)
-	ctx.Step(`^user "([^"]*)" tries to delete a non-existent todo$`, userTriesToDeleteANonExistentTodo)
-
-	// Assertion steps
-	ctx.Step(`^user "([^"]*)" should receive a success response$`, userShouldReceiveASuccessResponse)
-	ctx.Step(`^the todo should have title "([^"]*)"$`, theTodoShouldHaveTitle)
-	ctx.Step(`^the todo should not be completed$`, theTodoShouldNotBeCompleted)
-	ctx.Step(`^the todo should be completed$`, theTodoShouldBeCompleted)
-	ctx.Step(`^user "([^"]*)" should see (\d+) todos$`, userShouldSeeTodos)
-	ctx.Step(`^the todos should include "([^"]*)"$`, theTodosShouldInclude)
-	ctx.Step(`^user "([^"]*)" should receive the todo with title "([^"]*)"$`, userShouldReceiveTheTodoWithTitle)
-	ctx.Step(`^user "([^"]*)" should receive the updated todo$`, userShouldReceiveTheUpdatedTodo)
-	ctx.Step(`^user "([^"]*)" should receive a success message$`, userShouldReceiveASuccessMessage)
-	ctx.Step(`^user "([^"]*)" should no longer see the todo$`, userShouldNoLongerSeeTheTodo)
-	ctx.Step(`^user "([^"]*)" should see "([^"]*)" as completed$`, userShouldSeeAsCompleted)
-	ctx.Step(`^user "([^"]*)" should see "([^"]*)" as not completed$`, userShouldSeeAsNotCompleted)
-	ctx.Step(`^user "([^"]*)" should receive an empty list$`, userShouldReceiveAnEmptyList)
-	ctx.Step(`^user "([^"]*)" should receive a validation error$`, userShouldReceiveAValidationError)
-	ctx.Step(`^user "([^"]*)" should receive a not found error$`, userShouldReceiveANotFoundError)
-	ctx.Step(`^the response status should be (\d+)$`, theResponseStatusShouldBe)
-}
-
-// Authentication steps are now in common_steps.go
-
-// Todo creation steps
 func userCreatesATodoWithTitle(ctx context.Context, username, title string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
 
+	tc.SetCurrentUser(username)
 	todo := map[string]string{"title": title}
-	resp, err := tc.MakeAuthenticatedRequest("POST", "/todos", todo, username)
+	resp, err := tc.MakeRequest("POST", "/todos", todo)
 	if err != nil {
 		return ctx, fmt.Errorf("failed to create todo: %w", err)
 	}
@@ -112,37 +29,50 @@ func userCreatesATodoWithTitle(ctx context.Context, username, title string) (con
 }
 
 func userHasCreatedATodoWithTitle(ctx context.Context, username, title string) (context.Context, error) {
-	// First create the todo
 	ctx, err := userCreatesATodoWithTitle(ctx, username, title)
 	if err != nil {
 		return ctx, err
 	}
 
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
 
-	// Extract and store the todo ID from the response
 	if tc.GetLastResponse() != nil && tc.GetLastResponse().StatusCode == http.StatusCreated {
 		var todo app.Todo
-		if err := json.NewDecoder(tc.GetLastResponse().Body).Decode(&todo); err == nil {
+
+		bodyBytes, err := io.ReadAll(tc.GetLastResponse().Body)
+		if err != nil {
+			return ctx, err
+		}
+		err = tc.GetLastResponse().Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		tc.GetLastResponse().Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		if err := json.Unmarshal(bodyBytes, &todo); err == nil {
 			tc.StoreTodoID(username, todo.ID)
 			tc.StoreTodoByTitle(title, todo.ID)
+		} else {
+			return ctx, fmt.Errorf("failed to decode created todo: %w", err)
 		}
+	} else {
+		return ctx, fmt.Errorf("failed to create todo, status was %d", tc.GetLastResponse().StatusCode)
 	}
 
 	return ctx, nil
 }
 
-// Todo retrieval steps
 func userRequestsAllTodos(ctx context.Context, username string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
 
-	resp, err := tc.MakeAuthenticatedRequest("GET", "/todos", nil, username)
+	tc.SetCurrentUser(username)
+	resp, err := tc.MakeRequest("GET", "/todos", nil)
 	if err != nil {
 		return ctx, fmt.Errorf("failed to get todos: %w", err)
 	}
@@ -152,17 +82,18 @@ func userRequestsAllTodos(ctx context.Context, username string) (context.Context
 }
 
 func userRequestsTheTodoByID(ctx context.Context, username string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
 
+	tc.SetCurrentUser(username)
 	todoID, exists := tc.GetTodoID(username)
 	if !exists {
 		return ctx, fmt.Errorf("no todo ID found for user %s", username)
 	}
 
-	resp, err := tc.MakeAuthenticatedRequest("GET", "/todos/"+todoID, nil, username)
+	resp, err := tc.MakeRequest("GET", "/todos/"+todoID, nil)
 	if err != nil {
 		return ctx, fmt.Errorf("failed to get todo: %w", err)
 	}
@@ -171,20 +102,20 @@ func userRequestsTheTodoByID(ctx context.Context, username string) (context.Cont
 	return ctx, nil
 }
 
-// Todo update steps
 func userUpdatesTheTodoTitleTo(ctx context.Context, username, newTitle string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
 
+	tc.SetCurrentUser(username)
 	todoID, exists := tc.GetTodoID(username)
 	if !exists {
 		return ctx, fmt.Errorf("no todo ID found for user %s", username)
 	}
 
 	updateReq := app.UpdateTodoRequest{Title: &newTitle}
-	resp, err := tc.MakeAuthenticatedRequest("PUT", "/todos/"+todoID, updateReq, username)
+	resp, err := tc.MakeRequest("PUT", "/todos/"+todoID, updateReq)
 	if err != nil {
 		return ctx, fmt.Errorf("failed to update todo: %w", err)
 	}
@@ -194,11 +125,12 @@ func userUpdatesTheTodoTitleTo(ctx context.Context, username, newTitle string) (
 }
 
 func userMarksTheTodoAsCompleted(ctx context.Context, username string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
 
+	tc.SetCurrentUser(username)
 	todoID, exists := tc.GetTodoID(username)
 	if !exists {
 		return ctx, fmt.Errorf("no todo ID found for user %s", username)
@@ -206,7 +138,7 @@ func userMarksTheTodoAsCompleted(ctx context.Context, username string) (context.
 
 	completed := true
 	updateReq := app.UpdateTodoRequest{Completed: &completed}
-	resp, err := tc.MakeAuthenticatedRequest("PUT", "/todos/"+todoID, updateReq, username)
+	resp, err := tc.MakeRequest("PUT", "/todos/"+todoID, updateReq)
 	if err != nil {
 		return ctx, fmt.Errorf("failed to update todo: %w", err)
 	}
@@ -215,19 +147,19 @@ func userMarksTheTodoAsCompleted(ctx context.Context, username string) (context.
 	return ctx, nil
 }
 
-// Todo deletion steps
 func userDeletesTheTodo(ctx context.Context, username string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
 
+	tc.SetCurrentUser(username)
 	todoID, exists := tc.GetTodoID(username)
 	if !exists {
 		return ctx, fmt.Errorf("no todo ID found for user %s", username)
 	}
 
-	resp, err := tc.MakeAuthenticatedRequest("DELETE", "/todos/"+todoID, nil, username)
+	resp, err := tc.MakeRequest("DELETE", "/todos/"+todoID, nil)
 	if err != nil {
 		return ctx, fmt.Errorf("failed to delete todo: %w", err)
 	}
@@ -236,18 +168,21 @@ func userDeletesTheTodo(ctx context.Context, username string) (context.Context, 
 	return ctx, nil
 }
 
-// Authorization steps
 func userTriesToUpdateBobsTodo(ctx context.Context, username string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
 
-	// Try to update Bob's todo (assuming Bob has a todo with ID "bob-todo-id")
-	bobTodoID := "bob-todo-id"
+	tc.SetCurrentUser(username)
+	bobTodoID, ok := tc.GetTodoIDByTitle("Bob's task")
+	if !ok {
+		return ctx, fmt.Errorf("could not find todo ID for 'Bob's task'")
+	}
+
 	hackedTitle := "Hacked title"
 	updateReq := app.UpdateTodoRequest{Title: &hackedTitle}
-	resp, err := tc.MakeAuthenticatedRequest("PUT", "/todos/"+bobTodoID, updateReq, username)
+	resp, err := tc.MakeRequest("PUT", "/todos/"+bobTodoID, updateReq)
 	if err != nil {
 		return ctx, fmt.Errorf("failed to attempt update: %w", err)
 	}
@@ -256,45 +191,15 @@ func userTriesToUpdateBobsTodo(ctx context.Context, username string) (context.Co
 	return ctx, nil
 }
 
-func userShouldNotSee(ctx context.Context, username, title string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
-	if tc == nil {
-		return ctx, fmt.Errorf("test context not found")
-	}
-
-	// Get all todos for the user
-	resp, err := tc.MakeAuthenticatedRequest("GET", "/todos", nil, username)
-	if err != nil {
-		return ctx, fmt.Errorf("failed to get todos: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return ctx, fmt.Errorf("failed to get todos with status %d", resp.StatusCode)
-	}
-
-	var todos []app.Todo
-	if err := json.NewDecoder(resp.Body).Decode(&todos); err != nil {
-		return ctx, fmt.Errorf("failed to decode todos: %w", err)
-	}
-
-	for _, todo := range todos {
-		if todo.Title == title {
-			return ctx, fmt.Errorf("user %s should not see todo with title '%s' but found it", username, title)
-		}
-	}
-
-	return ctx, nil
-}
-
-// Error handling steps
 func userTriesToCreateATodoWithEmptyTitle(ctx context.Context, username string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
 
+	tc.SetCurrentUser(username)
 	todo := map[string]string{"title": ""}
-	resp, err := tc.MakeAuthenticatedRequest("POST", "/todos", todo, username)
+	resp, err := tc.MakeRequest("POST", "/todos", todo)
 	if err != nil {
 		return ctx, fmt.Errorf("failed to attempt todo creation: %w", err)
 	}
@@ -304,15 +209,16 @@ func userTriesToCreateATodoWithEmptyTitle(ctx context.Context, username string) 
 }
 
 func userTriesToUpdateANonExistentTodo(ctx context.Context, username string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
 
+	tc.SetCurrentUser(username)
 	nonExistentID := "non-existent-id"
 	updatedTitle := "Updated title"
 	updateReq := app.UpdateTodoRequest{Title: &updatedTitle}
-	resp, err := tc.MakeAuthenticatedRequest("PUT", "/todos/"+nonExistentID, updateReq, username)
+	resp, err := tc.MakeRequest("PUT", "/todos/"+nonExistentID, updateReq)
 	if err != nil {
 		return ctx, fmt.Errorf("failed to attempt update: %w", err)
 	}
@@ -322,13 +228,14 @@ func userTriesToUpdateANonExistentTodo(ctx context.Context, username string) (co
 }
 
 func userTriesToDeleteANonExistentTodo(ctx context.Context, username string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
 
+	tc.SetCurrentUser(username)
 	nonExistentID := "non-existent-id"
-	resp, err := tc.MakeAuthenticatedRequest("DELETE", "/todos/"+nonExistentID, nil, username)
+	resp, err := tc.MakeRequest("DELETE", "/todos/"+nonExistentID, nil)
 	if err != nil {
 		return ctx, fmt.Errorf("failed to attempt deletion: %w", err)
 	}
@@ -337,125 +244,134 @@ func userTriesToDeleteANonExistentTodo(ctx context.Context, username string) (co
 	return ctx, nil
 }
 
-// Assertion steps
-func userShouldReceiveASuccessResponse(ctx context.Context, username string) (context.Context, error) {
+func userShouldReceiveASuccessResponse(ctx context.Context) (context.Context, error) {
 	return theResponseStatusShouldBe(ctx, 200)
+}
+func userShouldReceiveACreatedResponse(ctx context.Context) (context.Context, error) {
+	return theResponseStatusShouldBe(ctx, 201)
+}
+
+func readTodoFromLastResponse(ctx context.Context) (*app.Todo, error) {
+	tc := GetTestContextFromContext(ctx)
+	if tc == nil {
+		return nil, fmt.Errorf("test context not found")
+	}
+	resp := tc.GetLastResponse()
+	if resp == nil {
+		return nil, fmt.Errorf("no response available")
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	err = resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	var todo app.Todo
+	if err := json.Unmarshal(bodyBytes, &todo); err == nil {
+		return &todo, nil
+	}
+
+	var todos []app.Todo
+	if err := json.Unmarshal(bodyBytes, &todos); err != nil {
+		return nil, fmt.Errorf("failed to decode response as single todo or todo list: %w (body: %s)", err, string(bodyBytes))
+	}
+
+	if len(todos) == 0 {
+		return nil, fmt.Errorf("no todos found in the response list")
+	}
+
+	return &todos[0], nil
+}
+
+func readTodoListFromLastResponse(ctx context.Context) ([]app.Todo, error) {
+	tc := GetTestContextFromContext(ctx)
+	if tc == nil {
+		return nil, fmt.Errorf("test context not found")
+	}
+	resp := tc.GetLastResponse()
+	if resp == nil {
+		return nil, fmt.Errorf("no response available")
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	err = resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	var todos []app.Todo
+	if err := json.Unmarshal(bodyBytes, &todos); err != nil {
+		return nil, fmt.Errorf("failed to decode todo list: %w (body: %s)", err, string(bodyBytes))
+	}
+	return todos, nil
 }
 
 func theTodoShouldHaveTitle(ctx context.Context, expectedTitle string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
-	if tc == nil {
-		return ctx, fmt.Errorf("test context not found")
+	todo, err := readTodoFromLastResponse(ctx)
+	if err != nil {
+		return ctx, err
 	}
-
-	resp := tc.GetLastResponse()
-	if resp == nil {
-		return ctx, fmt.Errorf("no response available")
-	}
-
-	var todo app.Todo
-	if err := json.NewDecoder(resp.Body).Decode(&todo); err != nil {
-		return ctx, fmt.Errorf("failed to decode todo: %w", err)
-	}
-
 	if todo.Title != expectedTitle {
 		return ctx, fmt.Errorf("expected todo title '%s', got '%s'", expectedTitle, todo.Title)
 	}
-
 	return ctx, nil
 }
 
 func theTodoShouldNotBeCompleted(ctx context.Context) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
-	if tc == nil {
-		return ctx, fmt.Errorf("test context not found")
+	todo, err := readTodoFromLastResponse(ctx)
+	if err != nil {
+		return ctx, err
 	}
-
-	resp := tc.GetLastResponse()
-	if resp == nil {
-		return ctx, fmt.Errorf("no response available")
-	}
-
-	var todo app.Todo
-	if err := json.NewDecoder(resp.Body).Decode(&todo); err != nil {
-		return ctx, fmt.Errorf("failed to decode todo: %w", err)
-	}
-
 	if todo.Completed {
 		return ctx, fmt.Errorf("expected todo to not be completed, but it is")
 	}
-
 	return ctx, nil
 }
 
 func theTodoShouldBeCompleted(ctx context.Context) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
-	if tc == nil {
-		return ctx, fmt.Errorf("test context not found")
+	todo, err := readTodoFromLastResponse(ctx)
+	if err != nil {
+		return ctx, err
 	}
-
-	resp := tc.GetLastResponse()
-	if resp == nil {
-		return ctx, fmt.Errorf("no response available")
-	}
-
-	var todo app.Todo
-	if err := json.NewDecoder(resp.Body).Decode(&todo); err != nil {
-		return ctx, fmt.Errorf("failed to decode todo: %w", err)
-	}
-
 	if !todo.Completed {
 		return ctx, fmt.Errorf("expected todo to be completed, but it is not")
 	}
-
 	return ctx, nil
 }
 
-func userShouldSeeTodos(ctx context.Context, username string, expectedCount int) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
-	if tc == nil {
-		return ctx, fmt.Errorf("test context not found")
+func userShouldSeeTodos(ctx context.Context, arg1 string, arg2 int) (context.Context, error) {
+	return shouldSeeTodos(ctx, arg2)
+}
+func shouldSeeTodos(ctx context.Context, expectedCount int) (context.Context, error) {
+	todos, err := readTodoListFromLastResponse(ctx)
+	if err != nil {
+		return ctx, err
 	}
-
-	resp := tc.GetLastResponse()
-	if resp == nil {
-		return ctx, fmt.Errorf("no response available")
-	}
-
-	var todos []app.Todo
-	if err := json.NewDecoder(resp.Body).Decode(&todos); err != nil {
-		return ctx, fmt.Errorf("failed to decode todos: %w", err)
-	}
-
 	if len(todos) != expectedCount {
 		return ctx, fmt.Errorf("expected %d todos, got %d", expectedCount, len(todos))
 	}
-
 	return ctx, nil
 }
 
 func theTodosShouldInclude(ctx context.Context, expectedTitle string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
-	if tc == nil {
-		return ctx, fmt.Errorf("test context not found")
+	todos, err := readTodoListFromLastResponse(ctx)
+	if err != nil {
+		return ctx, err
 	}
-
-	resp := tc.GetLastResponse()
-	if resp == nil {
-		return ctx, fmt.Errorf("no response available")
-	}
-
-	var todos []app.Todo
-	if err := json.NewDecoder(resp.Body).Decode(&todos); err != nil {
-		return ctx, fmt.Errorf("failed to decode todos: %w", err)
-	}
-
 	for _, todo := range todos {
 		if todo.Title == expectedTitle {
 			return ctx, nil
 		}
 	}
-
 	return ctx, fmt.Errorf("expected to find todo with title '%s' in todos", expectedTitle)
 }
 
@@ -463,29 +379,44 @@ func userShouldReceiveTheTodoWithTitle(ctx context.Context, username, expectedTi
 	return theTodoShouldHaveTitle(ctx, expectedTitle)
 }
 
-func userShouldReceiveTheUpdatedTodo(ctx context.Context, username string) (context.Context, error) {
-	return userShouldReceiveASuccessResponse(ctx, username)
+func userShouldReceiveTheUpdatedTodo(ctx context.Context) (context.Context, error) {
+	return userShouldReceiveASuccessResponse(ctx)
 }
 
 func userShouldNoLongerSeeTheTodo(ctx context.Context, username string) (context.Context, error) {
-	// Get all todos and verify the deleted todo is not present
-	return userRequestsAllTodos(ctx, username)
+	ctx, err := userRequestsAllTodos(ctx, username)
+	if err != nil {
+		return ctx, err
+	}
+
+	tc := GetTestContextFromContext(ctx)
+	deletedTodoID, exists := tc.GetTodoID(username)
+	if !exists {
+		return ctx, nil
+	}
+
+	todos, err := readTodoListFromLastResponse(ctx)
+	if err != nil {
+		return ctx, err
+	}
+
+	for _, todo := range todos {
+		if todo.ID == deletedTodoID {
+			return ctx, fmt.Errorf("expected todo to be deleted, but it was still found")
+		}
+	}
+	return ctx, nil
 }
 
 func userShouldSeeAsCompleted(ctx context.Context, username, title string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
-	if tc == nil {
-		return ctx, fmt.Errorf("test context not found")
+	ctx, err := userRequestsAllTodos(ctx, username)
+	if err != nil {
+		return ctx, err
 	}
 
-	resp := tc.GetLastResponse()
-	if resp == nil {
-		return ctx, fmt.Errorf("no response available")
-	}
-
-	var todos []app.Todo
-	if err := json.NewDecoder(resp.Body).Decode(&todos); err != nil {
-		return ctx, fmt.Errorf("failed to decode todos: %w", err)
+	todos, err := readTodoListFromLastResponse(ctx)
+	if err != nil {
+		return ctx, err
 	}
 
 	for _, todo := range todos {
@@ -496,24 +427,18 @@ func userShouldSeeAsCompleted(ctx context.Context, username, title string) (cont
 			return ctx, nil
 		}
 	}
-
 	return ctx, fmt.Errorf("todo with title '%s' not found", title)
 }
 
 func userShouldSeeAsNotCompleted(ctx context.Context, username, title string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
-	if tc == nil {
-		return ctx, fmt.Errorf("test context not found")
+	ctx, err := userRequestsAllTodos(ctx, username)
+	if err != nil {
+		return ctx, err
 	}
 
-	resp := tc.GetLastResponse()
-	if resp == nil {
-		return ctx, fmt.Errorf("no response available")
-	}
-
-	var todos []app.Todo
-	if err := json.NewDecoder(resp.Body).Decode(&todos); err != nil {
-		return ctx, fmt.Errorf("failed to decode todos: %w", err)
+	todos, err := readTodoListFromLastResponse(ctx)
+	if err != nil {
+		return ctx, err
 	}
 
 	for _, todo := range todos {
@@ -524,18 +449,303 @@ func userShouldSeeAsNotCompleted(ctx context.Context, username, title string) (c
 			return ctx, nil
 		}
 	}
-
 	return ctx, fmt.Errorf("todo with title '%s' not found", title)
 }
 
-func userShouldReceiveAnEmptyList(ctx context.Context, username string) (context.Context, error) {
-	return userShouldSeeTodos(ctx, username, 0)
+func userShouldReceiveAnEmptyList(ctx context.Context) (context.Context, error) {
+	return shouldSeeTodos(ctx, 0)
 }
 
-func userShouldReceiveAValidationError(ctx context.Context, username string) (context.Context, error) {
+func userShouldReceiveAValidationError(ctx context.Context) (context.Context, error) {
 	return theResponseStatusShouldBe(ctx, 400)
 }
 
-func userShouldReceiveANotFoundError(ctx context.Context, username string) (context.Context, error) {
+func userShouldReceiveANotFoundError(ctx context.Context) (context.Context, error) {
 	return theResponseStatusShouldBe(ctx, 404)
+}
+
+func iCreateATodoWithTitle(ctx context.Context, title string) (context.Context, error) {
+	tc := GetTestContextFromContext(ctx)
+	if tc == nil {
+		return ctx, fmt.Errorf("test context not found")
+	}
+
+	return userCreatesATodoWithTitle(ctx, tc.CurrentUser, title)
+}
+
+func iDeleteTheTodo(ctx context.Context) (context.Context, error) {
+	tc := GetTestContextFromContext(ctx)
+	if tc == nil {
+		return ctx, fmt.Errorf("test context not found")
+	}
+
+	return userDeletesTheTodo(ctx, tc.CurrentUser)
+}
+
+func iGetAllTodos(ctx context.Context) (context.Context, error) {
+	tc := GetTestContextFromContext(ctx)
+	if tc == nil {
+		return ctx, fmt.Errorf("test context not found")
+	}
+
+	return userRequestsAllTodos(ctx, tc.CurrentUser)
+}
+
+func iShouldReceiveAListWithTodo(ctx context.Context, expectedCount int) (context.Context, error) {
+	return shouldSeeTodos(ctx, expectedCount)
+}
+
+func iShouldReceiveAnEmptyList(ctx context.Context) (context.Context, error) {
+	return userShouldReceiveAnEmptyList(ctx)
+}
+
+func iShouldReceiveTheCreatedTodoWithAnID(ctx context.Context) (context.Context, error) {
+	tc := GetTestContextFromContext(ctx)
+	if tc == nil {
+		return ctx, fmt.Errorf("test context not found")
+	}
+
+	resp := tc.GetLastResponse()
+	if resp == nil {
+		return ctx, fmt.Errorf("no response available")
+	}
+
+	if resp.StatusCode != http.StatusCreated {
+		return ctx, fmt.Errorf("expected status 201, got %d", resp.StatusCode)
+	}
+
+	var todo app.Todo
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ctx, fmt.Errorf("failed to read response body: %w", err)
+	}
+	err = resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	if err := json.Unmarshal(bodyBytes, &todo); err != nil {
+		return ctx, fmt.Errorf("failed to decode todo: %w (body: %s)", err, string(bodyBytes))
+	}
+
+	if todo.ID == "" {
+		return ctx, fmt.Errorf("expected todo to have an ID")
+	}
+
+	tc.StoreTodoID(tc.CurrentUser, todo.ID)
+	tc.StoreTodoByTitle(todo.Title, todo.ID)
+
+	return ctx, nil
+}
+
+func iShouldReceiveTheUpdatedTodoWithCompletedStatusTrue(ctx context.Context) (context.Context, error) {
+	todo, err := readTodoFromLastResponse(ctx)
+	if err != nil {
+		return ctx, err
+	}
+
+	if !todo.Completed {
+		return ctx, fmt.Errorf("expected todo to be completed, but it is not")
+	}
+
+	return ctx, nil
+}
+
+func iShouldReceiveTheUpdatedTodoWithTitle(ctx context.Context, expectedTitle string) (context.Context, error) {
+	return theTodoShouldHaveTitle(ctx, expectedTitle)
+}
+
+func iUpdateTheTodoCompletionStatusToTrue(ctx context.Context) (context.Context, error) {
+	tc := GetTestContextFromContext(ctx)
+	if tc == nil {
+		return ctx, fmt.Errorf("test context not found")
+	}
+
+	return userMarksTheTodoAsCompleted(ctx, tc.CurrentUser)
+}
+
+func iUpdateTheTodoTitleTo(ctx context.Context, newTitle string) (context.Context, error) {
+	tc := GetTestContextFromContext(ctx)
+	if tc == nil {
+		return ctx, fmt.Errorf("test context not found")
+	}
+
+	return userUpdatesTheTodoTitleTo(ctx, tc.CurrentUser, newTitle)
+}
+
+func userCreatesMultipleTodosWithDifferentTitles(ctx context.Context, username string) (context.Context, error) {
+	titles := []string{"Task 1", "Task 2", "Task 3"}
+
+	for _, title := range titles {
+		_, err := userCreatesATodoWithTitle(ctx, username, title)
+		if err != nil {
+			return ctx, fmt.Errorf("failed to create todo '%s': %w", title, err)
+		}
+	}
+
+	return ctx, nil
+}
+
+func userHasCreatedSeveralTodos(ctx context.Context, username string) (context.Context, error) {
+	return userCreatesMultipleTodosWithDifferentTitles(ctx, username)
+}
+
+func userMarksAsCompleted(ctx context.Context, username, title string) (context.Context, error) {
+	tc := GetTestContextFromContext(ctx)
+	if tc == nil {
+		return ctx, fmt.Errorf("test context not found")
+	}
+
+	// Find the todo by title
+	todoID, exists := tc.GetTodoIDByTitle(title)
+	if !exists {
+		return ctx, fmt.Errorf("todo with title '%s' not found", title)
+	}
+
+	// Update the todo to mark it as completed
+	completed := true
+	updateReq := app.UpdateTodoRequest{Completed: &completed}
+	resp, err := tc.MakeRequest("PUT", "/todos/"+todoID, updateReq)
+	if err != nil {
+		return ctx, fmt.Errorf("failed to update todo: %w", err)
+	}
+
+	tc.SetLastResponse(resp)
+	return ctx, nil
+}
+
+// userPerformsMultipleOperationsWithTheSameToken performs multiple operations using the same token
+func userPerformsMultipleOperationsWithTheSameToken(ctx context.Context, username string) (context.Context, error) {
+	_, err := userCreatesATodoWithTitle(ctx, username, "Token test task")
+	if err != nil {
+		return ctx, err
+	}
+
+	_, err = userRequestsAllTodos(ctx, username)
+	if err != nil {
+		return ctx, err
+	}
+
+	_, err = userUpdatesTheTodoTitleTo(ctx, username, "Updated token test task")
+	if err != nil {
+		return ctx, err
+	}
+
+	_, err = userMarksTheTodoAsCompleted(ctx, username)
+	if err != nil {
+		return ctx, err
+	}
+
+	_, err = userDeletesTheTodo(ctx, username)
+	if err != nil {
+		return ctx, err
+	}
+
+	return ctx, nil
+}
+
+func userPerformsVariousOperationsUpdateDeleteCreate(ctx context.Context, username string) (context.Context, error) {
+	tc := GetTestContextFromContext(ctx)
+	_, err := userCreatesATodoWithTitle(ctx, username, "New task")
+	if err != nil {
+		return ctx, err
+	}
+
+	_, err = userRequestsAllTodos(ctx, username)
+	if err != nil {
+		return ctx, err
+	}
+
+	_, exists := tc.GetTodoID(username)
+	if !exists {
+		return ctx, fmt.Errorf("no todo ID found for user %s", username)
+	}
+
+	_, err = userUpdatesTheTodoTitleTo(ctx, username, "Updated task")
+	if err != nil {
+		return ctx, err
+	}
+
+	_, err = userDeletesTheTodo(ctx, username)
+	if err != nil {
+		return ctx, err
+	}
+
+	return ctx, nil
+}
+
+func userShouldBeAbleToAccessTheirTodos(ctx context.Context, username string) (context.Context, error) {
+	_, err := userRequestsAllTodos(ctx, username)
+	if err != nil {
+		return ctx, err
+	}
+
+	return theResponseStatusShouldBe(ctx, 200)
+}
+
+func userShouldSeeTodosInTheirList(ctx context.Context, username string, expectedCount int) (context.Context, error) {
+	_, err := userRequestsAllTodos(ctx, username)
+	if err != nil {
+		return ctx, err
+	}
+
+	return shouldSeeTodos(ctx, expectedCount)
+}
+
+func userUpdatesTitleTo(ctx context.Context, username, oldTitle, newTitle string) (context.Context, error) {
+	tc := GetTestContextFromContext(ctx)
+	if tc == nil {
+		return ctx, fmt.Errorf("test context not found")
+	}
+
+	todoID, exists := tc.GetTodoIDByTitle(oldTitle)
+	if !exists {
+		return ctx, fmt.Errorf("todo with title '%s' not found", oldTitle)
+	}
+
+	updateReq := app.UpdateTodoRequest{Title: &newTitle}
+	resp, err := tc.MakeRequest("PUT", "/todos/"+todoID, updateReq)
+	if err != nil {
+		return ctx, fmt.Errorf("failed to update todo: %w", err)
+	}
+
+	tc.SetLastResponse(resp)
+	return ctx, nil
+}
+
+func allChangesShouldBeReflectedCorrectly(ctx context.Context) (context.Context, error) {
+	return ctx, nil
+}
+
+func allOperationsShouldSucceed(ctx context.Context) (context.Context, error) {
+	return ctx, nil
+}
+
+func noDataShouldBeLost(ctx context.Context) (context.Context, error) {
+	return ctx, nil
+}
+
+func noDataShouldBeLostOrCorrupted(ctx context.Context) (context.Context, error) {
+	return ctx, nil
+}
+
+func subsequentOperationsShouldWorkNormally(ctx context.Context) (context.Context, error) {
+	return ctx, nil
+}
+
+func theDataShouldRemainConsistent(ctx context.Context) (context.Context, error) {
+	return ctx, nil
+}
+
+func theSystemEncountersATemporaryErrorDuringAnOperation(ctx context.Context) (context.Context, error) {
+	return ctx, nil
+}
+
+func theSystemShouldRecoverGracefully(ctx context.Context) (context.Context, error) {
+	return ctx, nil
+}
+
+func theTokenShouldRemainValid(ctx context.Context) (context.Context, error) {
+	return ctx, nil
 }

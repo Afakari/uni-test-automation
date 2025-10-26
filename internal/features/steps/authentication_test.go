@@ -1,64 +1,17 @@
 package steps
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"testing"
-
-	"github.com/cucumber/godog"
+	"io"
+	"net/http"
 	"todoapp/internal/app"
-	"todoapp/internal/features/support"
 )
 
-func TestUserAuthentication(t *testing.T) {
-	suite := godog.TestSuite{
-		ScenarioInitializer: InitializeUserAuthScenario,
-		Options: &godog.Options{
-			Format:   "pretty",
-			Paths:    []string{"../authentication.feature"},
-			TestingT: t,
-		},
-	}
-
-	if suite.Run() != 0 {
-		t.Fatal("non-zero status returned, failed to run feature tests")
-	}
-}
-
-func InitializeUserAuthScenario(ctx *godog.ScenarioContext) {
-	ctx.Before(func(ctx context.Context, sc *godog.Scenario) (context.Context, error) {
-		tc := support.NewTestContext()
-		if err := tc.SetupServer(); err != nil {
-			return ctx, fmt.Errorf("failed to setup test server: %w", err)
-		}
-		return support.SetTestContextInContext(ctx, tc), nil
-	})
-
-	ctx.After(func(ctx context.Context, sc *godog.Scenario, err error) (context.Context, error) {
-		tc := support.GetTestContextFromContext(ctx)
-		if tc != nil {
-			tc.CloseServer()
-		}
-		return ctx, nil
-	})
-
-	ctx.Step(`^the secret key "([^"]*)" is set up$`, theSecretKeyIsSetUp)
-	ctx.Step(`^a user named "([^"]*)" with password "([^"]*)" is already registered$`, aUserNamedWithPasswordIsRegistered)
-
-	ctx.Step(`^I register with username "([^"]*)" and password "([^"]*)"$`, iRegisterWithUsernameAndPassword)
-	ctx.Step(`^I login with username "([^"]*)" and password "([^"]*)"$`, iLoginWithUsernameAndPassword)
-	ctx.Step(`^I send invalid JSON to the register endpoint$`, iSendInvalidJSONToTheRegisterEndpoint)
-	ctx.Step(`^I send invalid JSON to the login endpoint$`, iSendInvalidJSONToTheLoginEndpoint)
-	ctx.Step(`^a user named "([^"]*)" with password "([^"]*)" is registered$`, aUserNamedWithPasswordIsRegistered)
-
-	ctx.Step(`^I should receive a success message$`, iShouldReceiveASuccessMessage)
-	ctx.Step(`^I should receive a valid JWT token$`, iShouldReceiveAValidJwtToken)
-	ctx.Step(`^I should receive an error message "([^"]*)"$`, iShouldReceiveAnErrorMessage)
-	ctx.Step(`^the response status should be (\d+)$`, theResponseStatusShouldBe)
-}
-
 func iRegisterWithUsernameAndPassword(ctx context.Context, username, password string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
@@ -74,7 +27,7 @@ func iRegisterWithUsernameAndPassword(ctx context.Context, username, password st
 }
 
 func iLoginWithUsernameAndPassword(ctx context.Context, username, password string) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
@@ -86,11 +39,31 @@ func iLoginWithUsernameAndPassword(ctx context.Context, username, password strin
 	}
 
 	tc.SetLastResponse(resp)
+
+	if resp.StatusCode == http.StatusOK {
+		var loginResponse map[string]string
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return ctx, err
+		}
+		err = resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		if err := json.Unmarshal(bodyBytes, &loginResponse); err == nil {
+			if token, exists := loginResponse["token"]; exists {
+				tc.StoreUserToken(username, token)
+				tc.SetCurrentUser(username)
+			}
+		}
+	}
 	return ctx, nil
 }
 
 func iSendInvalidJSONToTheRegisterEndpoint(ctx context.Context) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
@@ -105,7 +78,7 @@ func iSendInvalidJSONToTheRegisterEndpoint(ctx context.Context) (context.Context
 }
 
 func iSendInvalidJSONToTheLoginEndpoint(ctx context.Context) (context.Context, error) {
-	tc := support.GetTestContextFromContext(ctx)
+	tc := GetTestContextFromContext(ctx)
 	if tc == nil {
 		return ctx, fmt.Errorf("test context not found")
 	}
@@ -117,16 +90,4 @@ func iSendInvalidJSONToTheLoginEndpoint(ctx context.Context) (context.Context, e
 
 	tc.SetLastResponse(resp)
 	return ctx, nil
-}
-
-func iShouldReceiveASuccessMessage(ctx context.Context) (context.Context, error) {
-	return userShouldReceiveASuccessMessage(ctx, "")
-}
-
-func iShouldReceiveAValidJwtToken(ctx context.Context) (context.Context, error) {
-	return userShouldReceiveAValidJwtToken(ctx, "")
-}
-
-func iShouldReceiveAnErrorMessage(ctx context.Context, expectedError string) (context.Context, error) {
-	return userShouldReceiveAnErrorMessage(ctx, "", expectedError)
 }

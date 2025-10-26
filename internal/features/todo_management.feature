@@ -10,7 +10,7 @@ Feature: Todo Management
 
   Scenario: User can create a new todo
     When user "alice" creates a todo with title "Buy groceries"
-    Then user "alice" should receive a success response
+    Then user "alice" should receive a created response
     And the todo should have title "Buy groceries"
     And the todo should not be completed
 
