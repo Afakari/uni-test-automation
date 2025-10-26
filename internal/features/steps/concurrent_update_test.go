@@ -215,17 +215,16 @@ func theFinalTitleOfTheTaskWillBeARandomMixOfTheTwoVersions(ctx context.Context)
 	fmt.Printf("\nActual Result:\n")
 	fmt.Printf("  - 'A's in final title: %d\n", countA)
 	fmt.Printf("  - 'B's in final title: %d\n", countB)
-	fmt.Printf("  - **Total Appends Captured: %d**\n", totalAppends)
+	fmt.Printf("  - Total Appends Captured: %d\n", totalAppends)
 
-	// The proof:
 	if totalAppends == 400 {
-		return ctx, fmt.Errorf("TEST FAILED: NO RACE CONDITION DETECTED. All 400 appends were saved.")
+		return ctx, fmt.Errorf("TEST FAILED: NO RACE CONDITION DETECTED. All 400 appends were saved")
 	}
 	if totalAppends == 0 {
-		return ctx, fmt.Errorf("TEST FAILED: Zero appends were saved. Something is wrong.")
+		return ctx, fmt.Errorf("TEST FAILED: Zero appends were saved. Something is wrong")
 	}
 
-	fmt.Printf("\n**Conclusion (Race Condition Demonstrated):**\n")
+	fmt.Printf("\nConclusion (Race Condition Demonstrated):\n")
 	fmt.Printf("The system successfully processed all 400 update requests (all returned 200 OK).\n")
 	fmt.Printf("However, because both users were reading the *same* old data, modifying it, and writing it back,\n")
 	fmt.Printf("they overwrote each other's changes. This is a classic 'Lost Update' race condition.\n")
