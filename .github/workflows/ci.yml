@@ -21,11 +21,15 @@ jobs:
       - name: Download and Verify Go Modules
         run: go mod download
         
+      - name: Ensure Dependencies are Consistent
+        run: go mod tidy
+        
       - name: Install godog for BDD
         run: go install github.com/cucumber/godog/cmd/godog@latest
         
       - name: Run Unit Tests
         run: go test -v ./internal/app/... -coverprofile=coverage.out
+        
       - name: Run BDD Tests
         run: |
           export PATH=$PATH:$(go env GOPATH)/bin
