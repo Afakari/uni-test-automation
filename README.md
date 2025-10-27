@@ -76,7 +76,7 @@ This script automatically executes all Cucumber tests located in the `internal/f
 The project includes a GitHub Actions workflow that:
 - Runs unit and BDD tests on every commit to the `main` branch.
 - Uses a Go-based action environment for testing.
-- Publishes the project as a Docker image to `afakari/uni-test-automation` if all tests pass successfully.
+- Publishes the project as a Docker image to [`afakari/uni-test-automation`](https://hub.docker.com/r/afakari/uni-test-automation) if all tests pass successfully.
 
 ## Notes
 
